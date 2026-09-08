@@ -282,6 +282,7 @@ export default function Alumnos() {
         promedio_general: null,
         creditos_acumulados: null,
         es_actual: true,
+        titulacion_en_proceso: false,
       };
 
       if (editContext.trayectoria) {
