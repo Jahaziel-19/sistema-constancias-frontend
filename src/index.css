@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --uh-navy: 18 35 63;
+  --uh-gold: 169 130 47;
+  --uh-paper: 250 247 239;
+  --uh-ink: 20 28 46;
+  --uh-stone: 120 127 137;
+  --uh-emerald: 16 185 129;
+  --uh-red: 220 38 38;
+  --uh-ring: var(--uh-gold);
+
+  font-family: "Source Sans 3", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-rendering: geometricPrecision;
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    color: rgb(var(--uh-ink));
+    background: rgb(var(--uh-paper));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  .uh-paper {
+    background-color: rgb(var(--uh-paper));
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(var(--uh-gold) / 0.06) 1px, transparent 1px),
+      radial-gradient(circle at 1px 1px, rgba(var(--uh-navy) / 0.03) 1px, transparent 1px);
+    background-size: 28px 28px, 56px 56px;
+    background-position: 0 0, 10px 16px;
+  }
+
+  .uh-title {
+    font-family: "Cormorant Garamond", ui-serif, Georgia, serif;
+    letter-spacing: 0.02em;
+  }
+}

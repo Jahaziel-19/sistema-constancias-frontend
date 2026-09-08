@@ -1,0 +1,1042 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+import Drawer from "@/components/ui/Drawer";
+import Input from "@/components/ui/Input";
+import PageHeader from "@/components/ui/PageHeader";
+import Pagination from "@/components/ui/Pagination";
+import Select from "@/components/ui/Select";
+import {
+  apiGetAutoridades,
+  apiGetCarreras,
+  apiGetConfiguracionInstitucional,
+  apiGetMaterias,
+  apiGetPlanesEstudio,
+  apiGetPlanteles,
+  apiGetTiposDocumento,
+  apiUpdateAutoridad,
+  apiUpdateCarrera,
+  apiUpdateConfiguracionInstitucional,
+  apiUpdateMateria,
+  apiUpdatePlanEstudio,
+  apiUpdatePlantel,
+  apiUpdateTipoDocumento,
+  type Autoridad,
+  type Carrera,
+  type ConfiguracionInstitucional,
+  type Materia,
+  type PlanEstudio,
+  type Plantel,
+  type TipoDocumento,
+} from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth";
+
+type TabKey = "planteles" | "carreras" | "planes" | "autoridades" | "tipos" | "institucion";
+
+const TABS: Array<{ key: TabKey; label: string }> = [
+  { key: "planteles", label: "Planteles" },
+  { key: "carreras", label: "Carreras" },
+  { key: "planes", label: "Planes y materias" },
+  { key: "autoridades", label: "Autoridades" },
+  { key: "tipos", label: "Tipos de documento" },
+  { key: "institucion", label: "Institución" },
+];
+
+type EditTarget =
+  | { kind: "plantel"; item: Plantel }
+  | { kind: "carrera"; item: Carrera }
+  | { kind: "plan"; item: PlanEstudio }
+  | { kind: "materia"; item: Materia }
+  | { kind: "autoridad"; item: Autoridad }
+  | { kind: "tipo"; item: TipoDocumento }
+  | { kind: "institucion"; item: ConfiguracionInstitucional };
+
+export default function Catalogos() {
+  const token = useAuthStore((s) => s.accessToken);
+  const [tab, setTab] = useState<TabKey>("planteles");
+  const active = useMemo(() => TABS.find((t) => t.key === tab)?.label ?? "", [tab]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [plantelId, setPlantelId] = useState<string>("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  const [edit, setEdit] = useState<EditTarget | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [formJson, setFormJson] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [materiasPageByPlanId, setMateriasPageByPlanId] = useState<Record<number, number>>({});
+  const [materiasPageSizeByPlanId, setMateriasPageSizeByPlanId] = useState<Record<number, number>>({});
+
+  const [planteles, setPlanteles] = useState<Plantel[]>([]);
+  const [carreras, setCarreras] = useState<Carrera[]>([]);
+  const [planes, setPlanes] = useState<PlanEstudio[]>([]);
+  const [materias, setMaterias] = useState<Materia[]>([]);
+  const [autoridades, setAutoridades] = useState<Autoridad[]>([]);
+  const [tipos, setTipos] = useState<TipoDocumento[]>([]);
+  const [configuracion, setConfiguracion] = useState<ConfiguracionInstitucional | null>(null);
+
+  const loadAll = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const [p, c, a, t, pl, m, cfg] = await Promise.all([
+        apiGetPlanteles(token),
+        apiGetCarreras(token),
+        apiGetAutoridades(token),
+        apiGetTiposDocumento(token),
+        apiGetPlanesEstudio(token),
+        apiGetMaterias(token),
+        apiGetConfiguracionInstitucional(token),
+      ]);
+      setPlanteles(p);
+      setCarreras(c);
+      setAutoridades(a);
+      setTipos(t);
+      setPlanes(pl);
+      setMaterias(m);
+      setConfiguracion(cfg);
+    } catch {
+      setError("No se pudieron cargar los catálogos. Verifica que el backend esté corriendo y que tu sesión sea válida.");
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void loadAll();
+  }, [loadAll]);
+
+  const plantelNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    planteles.forEach((p) => map.set(p.id, p.nombre));
+    return map;
+  }, [planteles]);
+
+  const carreraNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    carreras.forEach((c) => map.set(c.id, c.nombre));
+    return map;
+  }, [carreras]);
+
+  const materiasByPlanId = useMemo(() => {
+    const map = new Map<number, Materia[]>();
+    materias.forEach((m) => {
+      const id = m.plan_estudio;
+      const arr = map.get(id) ?? [];
+      arr.push(m);
+      map.set(id, arr);
+    });
+    map.forEach((arr) => arr.sort((a, b) => (a.ciclo_numero - b.ciclo_numero) || a.id - b.id));
+    return map;
+  }, [materias]);
+
+  const plantelOptions = useMemo(() => {
+    const opts = [{ value: "", label: "Todos los planteles" }];
+    planteles.forEach((p) => opts.push({ value: String(p.id), label: p.nombre }));
+    return opts;
+  }, [planteles]);
+
+  const qLower = q.trim().toLowerCase();
+
+  useEffect(() => {
+    setPage(1);
+  }, [tab, qLower, plantelId]);
+
+  const filteredPlanteles = useMemo(() => {
+    if (!qLower) return planteles;
+    return planteles.filter((p) => {
+      const base = `${p.clave_plantel} ${p.nombre}`.toLowerCase();
+      return base.includes(qLower);
+    });
+  }, [planteles, qLower]);
+
+  const filteredCarreras = useMemo(() => {
+    const pid = plantelId ? Number(plantelId) : null;
+    return carreras.filter((c) => {
+      if (pid && c.plantel_id !== pid) return false;
+      if (!qLower) return true;
+      return `${c.nombre} ${c.acuerdo_sep}`.toLowerCase().includes(qLower);
+    });
+  }, [carreras, plantelId, qLower]);
+
+  const filteredPlanes = useMemo(() => {
+    const pid = plantelId ? Number(plantelId) : null;
+    return planes.filter((p) => {
+      const carrera = carreras.find((c) => c.id === p.carrera);
+      if (pid && carrera?.plantel_id !== pid) return false;
+      if (!qLower) return true;
+      const base = `${p.clave_plan} ${carrera?.nombre ?? ""}`.toLowerCase();
+      return base.includes(qLower);
+    });
+  }, [planes, carreras, plantelId, qLower]);
+
+  const filteredAutoridades = useMemo(() => {
+    if (!qLower) return autoridades;
+    return autoridades.filter((a) => `${a.nombres} ${a.apellidos} ${a.cargo}`.toLowerCase().includes(qLower));
+  }, [autoridades, qLower]);
+
+  const filteredTipos = useMemo(() => {
+    if (!qLower) return tipos;
+    return tipos.filter((t) => `${t.nombre} ${t.descripcion} ${t.aplica_a}`.toLowerCase().includes(qLower));
+  }, [tipos, qLower]);
+
+  const filteredConfiguracion = useMemo(() => {
+    if (!configuracion) return [];
+    if (!qLower) return [configuracion];
+    if (configuracion.nombre_institucion.toLowerCase().includes(qLower)) return [configuracion];
+    return [];
+  }, [configuracion, qLower]);
+
+  const activeList = useMemo(() => {
+    if (tab === "planteles") return filteredPlanteles.length;
+    if (tab === "carreras") return filteredCarreras.length;
+    if (tab === "planes") return filteredPlanes.length;
+    if (tab === "autoridades") return filteredAutoridades.length;
+    if (tab === "tipos") return filteredTipos.length;
+    if (tab === "institucion") return filteredConfiguracion.length;
+    return 0;
+  }, [filteredAutoridades.length, filteredCarreras.length, filteredPlanes.length, filteredPlanteles.length, filteredTipos.length, filteredConfiguracion.length, tab]);
+
+  const safePage = useMemo(() => {
+    const totalPages = Math.max(1, Math.ceil(activeList / Math.max(1, pageSize)));
+    return Math.max(1, Math.min(page, totalPages));
+  }, [activeList, page, pageSize]);
+
+  const openEdit = useCallback(
+    (target: EditTarget) => {
+      setEdit(target);
+      setSaveError(null);
+      if (target.kind === "plantel") {
+        const d = target.item.domicilio ?? {};
+        setForm({
+          clave_plantel: target.item.clave_plantel ?? "",
+          nombre: target.item.nombre ?? "",
+          rgp: target.item.rgp ?? "",
+          registro_sep: target.item.registro_sep ?? "",
+          pagina_web: target.item.pagina_web ?? "",
+          calle: d.calle ?? "",
+          numero_exterior: d.numero_exterior ?? "",
+          numero_interior: d.numero_interior ?? "",
+          colonia: d.colonia ?? "",
+          codigo_postal: d.codigo_postal ?? "",
+          municipio: d.municipio ?? "",
+          estado: d.estado ?? "",
+        });
+        setFormJson("");
+      } else if (target.kind === "carrera") {
+        setForm({
+          plantel_id: String(target.item.plantel_id ?? ""),
+          nombre: target.item.nombre ?? "",
+          acuerdo_sep: target.item.acuerdo_sep ?? "",
+          fecha_acuerdo_sep: target.item.fecha_acuerdo_sep ?? "",
+        });
+        setFormJson("");
+      } else if (target.kind === "autoridad") {
+        setForm({
+          nombres: target.item.nombres ?? "",
+          apellidos: target.item.apellidos ?? "",
+          cargo: target.item.cargo ?? "",
+          curp: target.item.curp ?? "",
+        });
+        setFormJson("");
+      } else if (target.kind === "tipo") {
+        setForm({
+          nombre: target.item.nombre ?? "",
+          descripcion: target.item.descripcion ?? "",
+          aplica_a: target.item.aplica_a ?? "",
+          plantilla: target.item.plantilla ?? "",
+        });
+        setFormJson(JSON.stringify(target.item.reglas_validacion ?? {}, null, 2));
+      } else if (target.kind === "plan") {
+        setForm({
+          carrera: String(target.item.carrera ?? ""),
+          clave_plan: target.item.clave_plan ?? "",
+          version: String(target.item.version ?? 1),
+          creditos_totales: target.item.creditos_totales == null ? "" : String(target.item.creditos_totales),
+          vigencia_inicio: target.item.vigencia_inicio ?? "",
+        });
+        setFormJson("");
+      } else if (target.kind === "materia") {
+        setForm({
+          plan_estudio: String(target.item.plan_estudio ?? ""),
+          ciclo_numero: String(target.item.ciclo_numero ?? ""),
+          clave_materia: target.item.clave_materia ?? "",
+          nombre_materia: target.item.nombre_materia ?? "",
+          creditos: target.item.creditos == null ? "" : String(target.item.creditos),
+        });
+        setFormJson("");
+      } else if (target.kind === "institucion") {
+        setForm({
+          nombre_institucion: target.item.nombre_institucion ?? "",
+        });
+        setFormJson("");
+      }
+      setDrawerOpen(true);
+    },
+    [setEdit],
+  );
+
+  const onSave = useCallback(async () => {
+    if (!token || !edit) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      if (edit.kind === "plantel") {
+        await apiUpdatePlantel(token, edit.item.id, {
+          clave_plantel: form.clave_plantel?.trim() ?? "",
+          nombre: form.nombre?.trim() ?? "",
+          rgp: form.rgp?.trim() || undefined,
+          registro_sep: form.registro_sep?.trim() || undefined,
+          pagina_web: form.pagina_web?.trim() || undefined,
+          calle: form.calle?.trim() || undefined,
+          numero_exterior: form.numero_exterior?.trim() || undefined,
+          numero_interior: form.numero_interior?.trim() || undefined,
+          colonia: form.colonia?.trim() || undefined,
+          codigo_postal: form.codigo_postal?.trim() || undefined,
+          municipio: form.municipio?.trim() || undefined,
+          estado: form.estado?.trim() || undefined,
+        });
+      } else if (edit.kind === "carrera") {
+        await apiUpdateCarrera(token, edit.item.id, {
+          plantel_id: Number(form.plantel_id),
+          nombre: form.nombre?.trim() ?? "",
+          acuerdo_sep: form.acuerdo_sep?.trim() ?? "",
+          fecha_acuerdo_sep: form.fecha_acuerdo_sep?.trim() ?? "",
+        });
+      } else if (edit.kind === "autoridad") {
+        await apiUpdateAutoridad(token, edit.item.id, {
+          nombres: form.nombres?.trim() ?? "",
+          apellidos: form.apellidos?.trim() ?? "",
+          cargo: form.cargo?.trim() ?? "",
+          curp: form.curp?.trim() ?? "",
+        });
+      } else if (edit.kind === "tipo") {
+        let reglas: unknown = {};
+        try {
+          reglas = formJson.trim() ? JSON.parse(formJson) : {};
+        } catch {
+          setSaveError("JSON inválido en reglas.");
+          setSaving(false);
+          return;
+        }
+        await apiUpdateTipoDocumento(token, edit.item.id, {
+          nombre: form.nombre?.trim() ?? "",
+          descripcion: form.descripcion?.trim() ?? "",
+          aplica_a: form.aplica_a?.trim() ?? "",
+          plantilla: form.plantilla?.trim() ?? "",
+          reglas_validacion: reglas,
+        });
+      } else if (edit.kind === "plan") {
+        await apiUpdatePlanEstudio(token, edit.item.id, {
+          carrera: Number(form.carrera),
+          clave_plan: form.clave_plan?.trim() ?? "",
+          version: Number(form.version || 1),
+          creditos_totales: form.creditos_totales ? Number(form.creditos_totales) : null,
+          vigencia_inicio: form.vigencia_inicio ? form.vigencia_inicio : null,
+        });
+      } else if (edit.kind === "materia") {
+        await apiUpdateMateria(token, edit.item.id, {
+          plan_estudio: Number(form.plan_estudio),
+          ciclo_numero: Number(form.ciclo_numero),
+          clave_materia: form.clave_materia?.trim() ?? "",
+          nombre_materia: form.nombre_materia?.trim() ?? "",
+          creditos: form.creditos ? Number(form.creditos) : null,
+        });
+      } else if (edit.kind === "institucion") {
+        await apiUpdateConfiguracionInstitucional(token, {
+          nombre_institucion: form.nombre_institucion?.trim() ?? "",
+        });
+      }
+
+      setDrawerOpen(false);
+      setEdit(null);
+      await loadAll();
+    } catch (e) {
+      const err = e as { message?: string; details?: unknown };
+      setSaveError(err?.message || "No se pudo guardar el registro.");
+    } finally {
+      setSaving(false);
+    }
+  }, [edit, form, formJson, loadAll, token]);
+
+  const renderPlanteles = useCallback(() => (
+    <table className="w-full border-collapse">
+      <thead className="bg-uh-navy">
+        <tr className="text-left text-xs font-semibold tracking-[0.18em] text-white/90">
+          <th className="px-4 py-3">ID</th>
+          <th className="px-4 py-3">CLAVE</th>
+          <th className="px-4 py-3">NOMBRE</th>
+          <th className="px-4 py-3">ACCIONES</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filteredPlanteles.length ? (
+          filteredPlanteles.slice((safePage - 1) * pageSize, (safePage - 1) * pageSize + pageSize).map((p) => (
+            <tr key={p.id} className="border-t border-uh-stone/10 bg-white">
+              <td className="px-4 py-3 text-sm text-uh-stone/85">{p.id}</td>
+              <td className="px-4 py-3 text-sm font-semibold text-uh-ink">{p.clave_plantel}</td>
+              <td className="px-4 py-3 text-sm text-uh-stone/85">{p.nombre}</td>
+              <td className="px-4 py-3">
+                <Button variant="secondary" className="h-9 px-3" onClick={() => openEdit({ kind: "plantel", item: p })}>
+                  Editar
+                </Button>
+              </td>
+            </tr>
+          ))
+        ) : (
+          <tr>
+            <td colSpan={4} className="px-4 py-10 text-center text-sm text-uh-stone/80">
+              {loading ? "Cargando…" : "Sin registros."}
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  ), [filteredPlanteles, loading, pageSize, safePage, openEdit]);
+
+  const renderCarreras = useCallback(() => (
+    <table className="w-full border-collapse">
+      <thead className="bg-uh-navy">
+        <tr className="text-left text-xs font-semibold tracking-[0.18em] text-white/90">
+          <th className="px-4 py-3">ID</th>
+          <th className="px-4 py-3">PLANTEL</th>
+          <th className="px-4 py-3">CARRERA</th>
+          <th className="px-4 py-3">ACUERDO SEP</th>
+          <th className="px-4 py-3">ACCIONES</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filteredCarreras.length ? (
+          filteredCarreras.slice((safePage - 1) * pageSize, (safePage - 1) * pageSize + pageSize).map((c) => (
+            <tr key={c.id} className="border-t border-uh-stone/10 bg-white">
+              <td className="px-4 py-3 text-sm text-uh-stone/85">{c.id}</td>
+              <td className="px-4 py-3 text-sm text-uh-stone/85">{plantelNameById.get(c.plantel_id) ?? c.plantel_id}</td>
+              <td className="px-4 py-3 text-sm font-semibold text-uh-ink">{c.nombre}</td>
+              <td className="px-4 py-3 text-sm text-uh-stone/85">{c.acuerdo_sep || "—"}</td>
+              <td className="px-4 py-3">
+                <Button variant="secondary" className="h-9 px-3" onClick={() => openEdit({ kind: "carrera", item: c })}>
+                  Editar
+                </Button>
+              </td>
+            </tr>
+          ))
+        ) : (
+          <tr>
+            <td colSpan={5} className="px-4 py-10 text-center text-sm text-uh-stone/80">
+              {loading ? "Cargando…" : "Sin registros."}
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  ), [filteredCarreras, loading, pageSize, plantelNameById, safePage, openEdit]);
+
+  const renderPlanes = useCallback(() => (
+    <div className="divide-y divide-uh-stone/10 bg-white">
+      {filteredPlanes.length ? (
+        filteredPlanes.slice((safePage - 1) * pageSize, (safePage - 1) * pageSize + pageSize).map((p) => {
+          const carrera = carreraNameById.get(p.carrera) ?? `Carrera #${p.carrera}`;
+          const items = materiasByPlanId.get(p.id) ?? [];
+          const mPage = materiasPageByPlanId[p.id] ?? 1;
+          const mSize = materiasPageSizeByPlanId[p.id] ?? 10;
+          const mTotalPages = Math.max(1, Math.ceil(items.length / Math.max(1, mSize)));
+          const mSafe = Math.max(1, Math.min(mPage, mTotalPages));
+          const mStart = (mSafe - 1) * mSize;
+          const mPaged = items.slice(mStart, mStart + mSize);
+          return (
+            <details key={p.id} className="group">
+              <summary className="cursor-pointer list-none px-4 py-4 transition hover:bg-uh-paper/40">
+                <div className="grid gap-2 sm:grid-cols-[160px_1fr_auto] sm:items-center">
+                  <div className="text-sm font-semibold text-uh-ink">{p.clave_plan}</div>
+                  <div className="text-sm text-uh-stone/85">{carrera}</div>
+                  <div className="flex items-center justify-end gap-3">
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/60">{items.length} MATERIAS</div>
+                    <Button variant="secondary" className="h-9 px-3" onClick={(e) => { e.preventDefault(); openEdit({ kind: "plan", item: p }); }}>
+                      Editar
+                    </Button>
+                  </div>
+                </div>
+              </summary>
+              <div className="px-4 pb-4">
+                <div className="overflow-hidden rounded-2xl border border-uh-stone/15">
+                  <table className="w-full border-collapse">
+                    <thead className="bg-uh-paper/80">
+                      <tr className="text-left text-xs font-semibold tracking-[0.18em] text-uh-stone/70">
+                      <th className="px-4 py-3">CICLO</th>
+                      <th className="px-4 py-3">CLAVE</th>
+                      <th className="px-4 py-3">MATERIA</th>
+                      <th className="px-4 py-3">CRÉDITOS</th>
+                      <th className="px-4 py-3">ACCIONES</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.length ? (
+                      mPaged.map((m) => (
+                        <tr key={m.id} className="border-t border-uh-stone/10">
+                          <td className="px-4 py-3 text-sm text-uh-stone/85">{m.ciclo_numero}</td>
+                          <td className="px-4 py-3 text-sm font-semibold text-uh-ink">{m.clave_materia}</td>
+                          <td className="px-4 py-3 text-sm text-uh-stone/85">{m.nombre_materia}</td>
+                          <td className="px-4 py-3 text-sm text-uh-stone/85">{m.creditos ?? "—"}</td>
+                          <td className="px-4 py-3">
+                            <Button variant="secondary" className="h-9 px-3" onClick={() => openEdit({ kind: "materia", item: m })}>
+                              Editar
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-8 text-center text-sm text-uh-stone/80">
+                          Sin materias.
+                        </td>
+                      </tr>
+                    )}
+                    </tbody>
+                  </table>
+                  {items.length ? (
+                    <Pagination page={mSafe} pageSize={mSize} total={items.length} onPageChange={(next) => setMateriasPageByPlanId((prev) => ({ ...prev, [p.id]: next }))} pageSizeOptions={[5, 10, 20, 50]} onPageSizeChange={(n) => { setMateriasPageSizeByPlanId((prev) => ({ ...prev, [p.id]: n })); setMateriasPageByPlanId((prev) => ({ ...prev, [p.id]: 1 })); }} />
+                  ) : null}
+                </div>
+              </div>
+            </details>
+          );
+        })
+      ) : (
+        <div className="px-4 py-10 text-center text-sm text-uh-stone/80">{loading ? "Cargando…" : "Sin registros."}</div>
+      )}
+    </div>
+  ), [filteredPlanes, loading, pageSize, safePage, materiasByPlanId, materiasPageByPlanId, materiasPageSizeByPlanId, openEdit]);
+
+  const renderAutoridades = useCallback(() => (
+    <table className="w-full border-collapse">
+      <thead className="bg-uh-navy">
+        <tr className="text-left text-xs font-semibold tracking-[0.18em] text-white/90">
+          <th className="px-4 py-3">ID</th>
+          <th className="px-4 py-3">NOMBRE</th>
+          <th className="px-4 py-3">CARGO</th>
+          <th className="px-4 py-3">CURP</th>
+          <th className="px-4 py-3">ACCIONES</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filteredAutoridades.length ? (
+          filteredAutoridades.slice((safePage - 1) * pageSize, (safePage - 1) * pageSize + pageSize).map((a) => (
+            <tr key={a.id} className="border-t border-uh-stone/10 bg-white">
+              <td className="px-4 py-3 text-sm text-uh-stone/85">{a.id}</td>
+              <td className="px-4 py-3 text-sm font-semibold text-uh-ink">{`${a.nombres} ${a.apellidos}`}</td>
+              <td className="px-4 py-3 text-sm text-uh-stone/85">{a.cargo}</td>
+              <td className="px-4 py-3 text-sm text-uh-stone/85">{a.curp || "—"}</td>
+              <td className="px-4 py-3">
+                <Button variant="secondary" className="h-9 px-3" onClick={() => openEdit({ kind: "autoridad", item: a })}>
+                  Editar
+                </Button>
+              </td>
+            </tr>
+          ))
+        ) : (
+          <tr>
+            <td colSpan={5} className="px-4 py-10 text-center text-sm text-uh-stone/80">
+              {loading ? "Cargando…" : "Sin registros."}
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  ), [filteredAutoridades, loading, pageSize, safePage, openEdit]);
+
+  const renderTipos = useCallback(() => (
+    <table className="w-full border-collapse">
+      <thead className="bg-uh-navy">
+        <tr className="text-left text-xs font-semibold tracking-[0.18em] text-white/90">
+          <th className="px-4 py-3">ID</th>
+          <th className="px-4 py-3">TIPO</th>
+          <th className="px-4 py-3">APLICA A</th>
+          <th className="px-4 py-3">PLANTILLA</th>
+          <th className="px-4 py-3">REGLAS</th>
+          <th className="px-4 py-3">ACCIONES</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filteredTipos.length ? (
+          filteredTipos.slice((safePage - 1) * pageSize, (safePage - 1) * pageSize + pageSize).map((t) => (
+            <tr key={t.id} className="border-t border-uh-stone/10 bg-white">
+              <td className="px-4 py-3 text-sm text-uh-stone/85">{t.id}</td>
+              <td className="px-4 py-3 text-sm font-semibold text-uh-ink">{t.nombre}</td>
+              <td className="px-4 py-3 text-sm text-uh-stone/85">{t.aplica_a || "—"}</td>
+              <td className="px-4 py-3 text-xs text-uh-stone/85">{t.plantilla || "—"}</td>
+              <td className="px-4 py-3 text-xs text-uh-stone/85">
+                <pre className="whitespace-pre-wrap">{JSON.stringify(t.reglas_validacion ?? {}, null, 0)}</pre>
+              </td>
+              <td className="px-4 py-3">
+                <Button variant="secondary" className="h-9 px-3" onClick={() => openEdit({ kind: "tipo", item: t })}>
+                  Editar
+                </Button>
+              </td>
+            </tr>
+          ))
+        ) : (
+          <tr>
+            <td colSpan={6} className="px-4 py-10 text-center text-sm text-uh-stone/80">
+              {loading ? "Cargando…" : "Sin registros."}
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  ), [filteredTipos, loading, pageSize, safePage, openEdit]);
+
+  const renderInstitucion = useCallback(() => (
+    <div className="divide-y divide-uh-stone/10 bg-white">
+      {filteredConfiguracion.length ? (
+        filteredConfiguracion.map((cfg) => (
+          <div key={cfg.id} className="px-4 py-4">
+            <div className="grid gap-3">
+              <div>
+                <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NOMBRE DE LA INSTITUCIÓN</div>
+                <div className="mt-2 text-sm text-uh-ink">{cfg.nombre_institucion}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">ACTUALIZADO</div>
+                <div className="mt-2 text-sm text-uh-stone/85">{new Date(cfg.actualizado_en).toLocaleString()}</div>
+              </div>
+              <div className="flex justify-end">
+                <Button variant="secondary" className="h-9 px-3" onClick={() => openEdit({ kind: "institucion", item: cfg })}>
+                  Editar
+                </Button>
+              </div>
+            </div>
+          </div>
+        ))
+      ) : (
+        <div className="px-4 py-10 text-center text-sm text-uh-stone/80">{loading ? "Cargando…" : "Sin registros."}</div>
+      )}
+    </div>
+  ), [filteredConfiguracion, loading, openEdit]);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Catálogos"
+        subtitle="Gobernanza de catálogos base (CRUD) sin recargar la SPA."
+        right={
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => void loadAll()} disabled={loading}>
+              Actualizar
+            </Button>
+            <Button disabled>Nuevo registro</Button>
+          </div>
+        }
+      />
+
+      <Card>
+        <div className="border-b border-uh-stone/15 px-4 py-3">
+          <div className="flex flex-wrap gap-2">
+            {TABS.map((t) => {
+              const is = t.key === tab;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setTab(t.key)}
+                  className={cn(
+                    "rounded-xl border px-3 py-2 text-sm font-semibold transition",
+                    is
+                      ? "border-uh-gold/60 bg-uh-gold/10 text-uh-ink"
+                      : "border-uh-stone/15 bg-white text-uh-stone/80 hover:border-uh-gold/40 hover:text-uh-ink",
+                  )}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="p-6">
+          <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">{active.toUpperCase()}</div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_260px]">
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar en el catálogo…" />
+            <Select value={plantelId} onChange={(e) => setPlantelId(e.target.value)} disabled={!planteles.length}>
+              {plantelOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          {error ? (
+            <div className="mt-4 rounded-2xl border border-uh-red/25 bg-uh-red/5 px-4 py-3 text-sm text-uh-red">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="mt-4 overflow-hidden rounded-2xl border border-uh-stone/15">
+            {tab === "planteles" && renderPlanteles()}
+            {tab === "carreras" && renderCarreras()}
+            {tab === "planes" && renderPlanes()}
+            {tab === "autoridades" && renderAutoridades()}
+            {tab === "tipos" && renderTipos()}
+            {tab === "institucion" && renderInstitucion()}
+          </div>
+
+          {tab !== "planes" ? (
+            <Pagination
+              page={safePage}
+              pageSize={pageSize}
+              total={activeList}
+              onPageChange={setPage}
+              pageSizeOptions={[10, 20, 50, 100]}
+              onPageSizeChange={(n) => {
+                setPageSize(n);
+                setPage(1);
+              }}
+            />
+          ) : (
+            <Pagination
+              page={safePage}
+              pageSize={pageSize}
+              total={filteredPlanes.length}
+              onPageChange={setPage}
+              pageSizeOptions={[5, 10, 20, 50]}
+              onPageSizeChange={(n) => {
+                setPageSize(n);
+                setPage(1);
+              }}
+            />
+          )}
+        </div>
+      </Card>
+
+      <Drawer
+        open={drawerOpen}
+        title={edit ? `Editar ${edit.kind}` : "Editar"}
+        onClose={() => {
+          setDrawerOpen(false);
+          setEdit(null);
+        }}
+        footer={
+          <div className="flex items-center justify-between gap-2">
+            {saveError ? <div className="text-sm text-uh-red">{saveError}</div> : <div />}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setDrawerOpen(false);
+                  setEdit(null);
+                }}
+                disabled={saving}
+              >
+                Cancelar
+              </Button>
+              <Button onClick={() => void onSave()} disabled={saving || !edit}>
+                {saving ? "Guardando…" : "Guardar"}
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        {edit ? (
+          <div className="grid gap-4">
+            {edit.kind === "plantel" ? (
+              <div className="grid gap-3">
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CLAVE</div>
+                  <div className="mt-2">
+                    <Input value={form.clave_plantel ?? ""} onChange={(e) => setForm((p) => ({ ...p, clave_plantel: e.target.value }))} />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NOMBRE</div>
+                  <div className="mt-2">
+                    <Input value={form.nombre ?? ""} onChange={(e) => setForm((p) => ({ ...p, nombre: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">RGP</div>
+                    <div className="mt-2">
+                      <Input value={form.rgp ?? ""} onChange={(e) => setForm((p) => ({ ...p, rgp: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">REGISTRO SEP</div>
+                    <div className="mt-2">
+                      <Input value={form.registro_sep ?? ""} onChange={(e) => setForm((p) => ({ ...p, registro_sep: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CALLE</div>
+                    <div className="mt-2">
+                      <Input value={form.calle ?? ""} onChange={(e) => setForm((p) => ({ ...p, calle: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NÚMERO EXTERIOR</div>
+                    <div className="mt-2">
+                      <Input value={form.numero_exterior ?? ""} onChange={(e) => setForm((p) => ({ ...p, numero_exterior: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NÚMERO INTERIOR</div>
+                    <div className="mt-2">
+                      <Input value={form.numero_interior ?? ""} onChange={(e) => setForm((p) => ({ ...p, numero_interior: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">COLONIA</div>
+                    <div className="mt-2">
+                      <Input value={form.colonia ?? ""} onChange={(e) => setForm((p) => ({ ...p, colonia: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CÓDIGO POSTAL</div>
+                    <div className="mt-2">
+                      <Input value={form.codigo_postal ?? ""} onChange={(e) => setForm((p) => ({ ...p, codigo_postal: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">MUNICIPIO</div>
+                    <div className="mt-2">
+                      <Input value={form.municipio ?? ""} onChange={(e) => setForm((p) => ({ ...p, municipio: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">ESTADO</div>
+                    <div className="mt-2">
+                      <Input value={form.estado ?? ""} onChange={(e) => setForm((p) => ({ ...p, estado: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {edit.kind === "carrera" ? (
+              <div className="grid gap-3">
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">PLANTEL</div>
+                  <div className="mt-2">
+                    <Select value={form.plantel_id ?? ""} onChange={(e) => setForm((p) => ({ ...p, plantel_id: e.target.value }))}>
+                      <option value="">Selecciona plantel</option>
+                      {planteles.map((p) => (
+                        <option key={p.id} value={String(p.id)}>
+                          {p.nombre}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NOMBRE</div>
+                  <div className="mt-2">
+                    <Input value={form.nombre ?? ""} onChange={(e) => setForm((p) => ({ ...p, nombre: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">ACUERDO SEP</div>
+                    <div className="mt-2">
+                      <Input value={form.acuerdo_sep ?? ""} onChange={(e) => setForm((p) => ({ ...p, acuerdo_sep: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">FECHA ACUERDO</div>
+                    <div className="mt-2">
+                      <Input value={form.fecha_acuerdo_sep ?? ""} onChange={(e) => setForm((p) => ({ ...p, fecha_acuerdo_sep: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {edit.kind === "autoridad" ? (
+              <div className="grid gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NOMBRES</div>
+                    <div className="mt-2">
+                      <Input value={form.nombres ?? ""} onChange={(e) => setForm((p) => ({ ...p, nombres: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">APELLIDOS</div>
+                    <div className="mt-2">
+                      <Input value={form.apellidos ?? ""} onChange={(e) => setForm((p) => ({ ...p, apellidos: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CARGO</div>
+                    <div className="mt-2">
+                      <Input value={form.cargo ?? ""} onChange={(e) => setForm((p) => ({ ...p, cargo: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CURP</div>
+                    <div className="mt-2">
+                      <Input value={form.curp ?? ""} onChange={(e) => setForm((p) => ({ ...p, curp: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {edit.kind === "tipo" ? (
+              <div className="grid gap-3">
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NOMBRE</div>
+                  <div className="mt-2">
+                    <Input value={form.nombre ?? ""} onChange={(e) => setForm((p) => ({ ...p, nombre: e.target.value }))} />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">DESCRIPCIÓN</div>
+                  <div className="mt-2">
+                    <Input value={form.descripcion ?? ""} onChange={(e) => setForm((p) => ({ ...p, descripcion: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">APLICA A</div>
+                    <div className="mt-2">
+                      <Input value={form.aplica_a ?? ""} onChange={(e) => setForm((p) => ({ ...p, aplica_a: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">PLANTILLA (RUTA HTML)</div>
+                    <div className="mt-2">
+                      <Input value={form.plantilla ?? ""} onChange={(e) => setForm((p) => ({ ...p, plantilla: e.target.value }))} placeholder="ruta/plantilla.html" />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">REGLAS (JSON)</div>
+                  <div className="mt-2">
+                    <textarea
+                      className={cn(
+                        "min-h-[220px] w-full rounded-xl border border-uh-stone/25 bg-white p-4 text-[13px] text-uh-ink outline-none transition",
+                        "placeholder:text-uh-stone/60 focus:border-uh-gold/80 focus:ring-2 focus:ring-uh-gold/25",
+                        "font-mono",
+                      )}
+                      value={formJson}
+                      onChange={(e) => setFormJson(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {edit.kind === "plan" ? (
+              <div className="grid gap-3">
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CARRERA</div>
+                  <div className="mt-2">
+                    <Select value={form.carrera ?? ""} onChange={(e) => setForm((p) => ({ ...p, carrera: e.target.value }))}>
+                      <option value="">Selecciona carrera</option>
+                      {carreras.map((c) => (
+                        <option key={c.id} value={String(c.id)}>
+                          {c.nombre}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CLAVE PLAN</div>
+                  <div className="mt-2">
+                    <Input value={form.clave_plan ?? ""} onChange={(e) => setForm((p) => ({ ...p, clave_plan: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">VERSIÓN</div>
+                    <div className="mt-2">
+                      <Input value={form.version ?? ""} onChange={(e) => setForm((p) => ({ ...p, version: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CRÉDITOS</div>
+                    <div className="mt-2">
+                      <Input value={form.creditos_totales ?? ""} onChange={(e) => setForm((p) => ({ ...p, creditos_totales: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">VIGENCIA</div>
+                    <div className="mt-2">
+                      <Input value={form.vigencia_inicio ?? ""} onChange={(e) => setForm((p) => ({ ...p, vigencia_inicio: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {edit.kind === "materia" ? (
+              <div className="grid gap-3">
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">PLAN</div>
+                  <div className="mt-2">
+                    <Select value={form.plan_estudio ?? ""} onChange={(e) => setForm((p) => ({ ...p, plan_estudio: e.target.value }))}>
+                      <option value="">Selecciona plan</option>
+                      {planes.map((p) => (
+                        <option key={p.id} value={String(p.id)}>
+                          {p.clave_plan}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CICLO</div>
+                    <div className="mt-2">
+                      <Input value={form.ciclo_numero ?? ""} onChange={(e) => setForm((p) => ({ ...p, ciclo_numero: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CRÉDITOS</div>
+                    <div className="mt-2">
+                      <Input value={form.creditos ?? ""} onChange={(e) => setForm((p) => ({ ...p, creditos: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CLAVE</div>
+                  <div className="mt-2">
+                    <Input value={form.clave_materia ?? ""} onChange={(e) => setForm((p) => ({ ...p, clave_materia: e.target.value }))} />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">MATERIA</div>
+                  <div className="mt-2">
+                    <Input value={form.nombre_materia ?? ""} onChange={(e) => setForm((p) => ({ ...p, nombre_materia: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {edit?.kind === "institucion" ? (
+              <div className="grid gap-3">
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NOMBRE DE LA INSTITUCIÓN</div>
+                  <div className="mt-2">
+                    <Input value={form.nombre_institucion ?? ""} onChange={(e) => setForm((p) => ({ ...p, nombre_institucion: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Drawer>
+    </div>
+  );
+}
