@@ -18,6 +18,7 @@ import {
   apiUpdatePeriodoAcademico,
   type CicloEscolar,
 } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/env";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
 import { CalendarDays, Plus, RefreshCw, Trash2 } from "lucide-react";
@@ -212,7 +213,7 @@ export default function Ciclos() {
       if (editPeriodo) {
         await apiUpdatePeriodoAcademico(token, editPeriodo.id, body);
       } else {
-        await fetch(`${import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api"}/periodos-academicos/`, {
+        await fetch(`${API_BASE_URL}/periodos-academicos/`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
