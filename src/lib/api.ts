@@ -60,7 +60,6 @@ export type Materia = {
   nombre_materia: string;
   creditos: number | null;
 };
-
 export type PeriodoAcademico = {
   id: number;
   ciclo_escolar: number;
@@ -70,14 +69,12 @@ export type PeriodoAcademico = {
   fecha_inicio: string | null;
   fecha_fin: string | null;
 };
-
 export type CicloEscolar = {
   id: number;
   anio_inicio: number | null;
   anio_fin: number | null;
   clave: string;
 };
-
 export type InscripcionPeriodo = {
   id: number;
   trayectoria_academica: number;
@@ -88,7 +85,6 @@ export type InscripcionPeriodo = {
   estatus: string;
   es_actual: boolean;
 };
-
 export type CalificacionDetalle = {
   id: number;
   inscripcion_periodo: number;
@@ -99,43 +95,38 @@ export type CalificacionDetalle = {
   calificacion_final: number | null;
   calificacion_letra: string;
 };
-
 export type CalificacionMatrizRow = {
   inscripcion_periodo_id: number;
   calificacion_detalle_id: number | null;
   alumno_id: number;
   matricula: string;
-  alumno_nombre: string;
   calificacion_ordinaria: number | null;
   extraordinario_1: number | null;
   extraordinario_2: number | null;
   calificacion_final: number | null;
   calificacion_letra: string;
 };
-
 export type Alumno = {
   id: number;
   matricula: string;
+  curp: string;
   nombres: string;
   primer_apellido: string;
   segundo_apellido: string;
-  curp: string;
   foto?: string | null;
   nivel_actual?: string;
 };
-
 export type TrayectoriaAcademica = {
   id: number;
   alumno: number;
   carrera: number;
   estatus_academico: number;
+  nivel_actual: string;
   promedio_general: string | null;
   creditos_acumulados: string | null;
-  nivel_actual: string;
   es_actual: boolean;
   titulacion_en_proceso: boolean;
 };
-
 export type DocumentoEmitido = {
   id: number;
   folio: string;
@@ -151,7 +142,6 @@ export type DocumentoEmitido = {
   html_renderizado?: string;
   es_valido: boolean;
 };
-
 export type AuditoriaSistema = {
   id: number;
   usuario: number | null;
@@ -162,11 +152,37 @@ export type AuditoriaSistema = {
   ip_origen: string | null;
   fecha_hora: string;
 };
-
 export type ConfiguracionInstitucional = {
   id: number;
   nombre_institucion: string;
   actualizado_en: string;
+};
+
+export type Permisos = {
+  dashboard: boolean;
+  auditoria: boolean;
+  catalogos: boolean;
+  emision: boolean;
+  alumnos: boolean;
+  calificaciones: boolean;
+  registros: boolean;
+  ciclos: boolean;
+};
+
+export type Modulo = keyof Permisos;
+
+export type PerfilUsuario = {
+  id: number;
+  username: string;
+  nombre: string;
+  is_staff: boolean;
+  is_superuser: boolean;
+  is_admin: boolean;
+  rol: string | null;
+  autoridad_id: number | null;
+  autoridad_nombre: string | null;
+  plantel_ids: number[];
+  permisos: Permisos;
 };
 
 export async function apiPublicVerify(folio: string) {
@@ -177,16 +193,8 @@ export async function apiGetPlanteles(token: string) {
   return http<ApiList<Plantel>>("/planteles/", { token });
 }
 
-export async function apiUpdatePlantel(token: string, id: number, payload: PlantelUpdatePayload) {
-  return http<Plantel>(`/planteles/${id}/`, { token, method: "PATCH", body: payload });
-}
-
 export async function apiGetCarreras(token: string) {
   return http<ApiList<Carrera>>("/carreras/", { token });
-}
-
-export async function apiUpdateCarrera(token: string, id: number, payload: Partial<Omit<Carrera, "id">>) {
-  return http<Carrera>(`/carreras/${id}/`, { token, method: "PATCH", body: payload });
 }
 
 export async function apiGetEstatus(token: string) {
@@ -201,8 +209,31 @@ export async function apiUpdateAutoridad(token: string, id: number, payload: Par
   return http<Autoridad>(`/autoridades/${id}/`, { token, method: "PATCH", body: payload });
 }
 
-export async function apiGetAlumnos(token: string) {
-  return http<ApiList<Alumno>>("/alumnos/", { token });
+export async function apiGetAlumnos(
+  token: string,
+  params?: {
+    page?: number;
+    pageSize?: number;
+    plantelId?: string;
+    carreraId?: string;
+    estatusId?: string;
+    search?: string;
+  }
+) {
+  const sp = new URLSearchParams();
+  if (params?.page) sp.set("page", String(params.page));
+  if (params?.pageSize) sp.set("page_size", String(params.pageSize));
+  if (params?.plantelId) sp.set("plantel_id", params.plantelId);
+  if (params?.carreraId) sp.set("carrera_id", params.carreraId);
+  if (params?.estatusId) sp.set("estatus_id", params.estatusId);
+  if (params?.search) sp.set("search", params.search);
+  const qs = sp.toString();
+  return http<{
+    count: number;
+    next: string | null;
+    previous: string | null;
+    results: Alumno[];
+  }>(`/alumnos/${qs ? `?${qs}` : ""}`, { token });
 }
 
 export async function apiGetAlumnoKardex(token: string, id: number) {
@@ -313,10 +344,6 @@ export async function apiGetCiclosPanel(token: string, params?: { rango?: number
   }>(`/ciclos-escolares/panel${qs ? `?${qs}` : ""}`, { token });
 }
 
-export async function apiGetTiposPeriodo(token: string) {
-  return http<ApiList<{ id: number; nombre: string }>>("/tipos-periodo/", { token });
-}
-
 export async function apiGetCiclosEscolares(token: string, params?: { tipoPeriodoId?: number; anio?: number }) {
   const sp = new URLSearchParams();
   if (params?.tipoPeriodoId) sp.set("tipo_periodo_id", String(params.tipoPeriodoId));
@@ -385,37 +412,6 @@ export async function apiGetDocumentoPdfDownload(token: string, id: number) {
   return http<Blob>(`/documentos/${id}/pdf/download/`, { token, expectBlob: true });
 }
 
-export type Permisos = {
-  dashboard: boolean;
-  auditoria: boolean;
-  catalogos: boolean;
-  emision: boolean;
-  alumnos: boolean;
-  calificaciones: boolean;
-  registros: boolean;
-  ciclos: boolean;
-};
-
-export type Modulo = keyof Permisos;
-
-export type PerfilUsuario = {
-  id: number;
-  username: string;
-  nombre: string;
-  is_staff: boolean;
-  is_superuser: boolean;
-  is_admin: boolean;
-  rol: string | null;
-  autoridad_id: number | null;
-  autoridad_nombre: string | null;
-  plantel_ids: number[];
-  permisos: Permisos;
-};
-
-export async function apiGetMe(token: string) {
-  return http<PerfilUsuario>("/auth/me/", { token });
-}
-
 export async function apiEmitirDocumento(
   token: string,
   payload: {
@@ -446,7 +442,7 @@ export async function apiGetAuditoria(
   if (params?.desde) sp.set("desde", params.desde);
   if (params?.hasta) sp.set("hasta", params.hasta);
   const qs = sp.toString();
-  return http<ApiList<AuditoriaSistema>>(`/auditoria/${qs ? `?${qs}` : ""}`, { token });
+  return http<ApiList<AuditoriaSistema>>(`/auditoria/${qs ? `?${qs}` : ""}`, { token );
 }
 
 export async function apiGetConfiguracionInstitucional(token: string) {

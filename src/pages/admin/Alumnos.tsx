@@ -10,7 +10,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import Pagination from "@/components/ui/Pagination";
 import Select from "@/components/ui/Select";
 import {
-  apiCreateTrayectoria,
+  apiEmitirDocumento,
   apiGetAlumnos,
   apiGetAlumnoKardex,
   apiGetCarreras,
@@ -60,9 +60,12 @@ export default function Alumnos() {
       carrera: number;
       estatus_academico: number;
       nivel_actual: string;
+      promedio_general: string | null;
+      creditos_acumulados: string | null;
       es_actual: boolean;
     }>
   >([]);
+  const [totalCount, setTotalCount] = useState(0);
 
   const carreraOptions = useMemo<Option[]>(() => {
     const list = carreras
@@ -81,55 +84,38 @@ export default function Alumnos() {
     [estatus],
   );
 
-  const trayectoriaByAlumno = useMemo(() => {
-    const map = new Map<number, (typeof trayectorias)[number]>();
-    for (const t of trayectorias) {
-      const existing = map.get(t.alumno);
-      if (!existing) {
-        map.set(t.alumno, t);
-        continue;
-      }
-      if (t.es_actual && !existing.es_actual) map.set(t.alumno, t);
+  const load = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const [p, c, e, a, t] = await Promise.all([
+        apiGetPlanteles(token),
+        apiGetCarreras(token),
+        apiGetEstatus(token),
+        apiGetAlumnos(token, {
+          page,
+          pageSize,
+          plantelId,
+          carreraId,
+          estatusId,
+          search: q,
+        }),
+        apiGetTrayectorias(token),
+      ]);
+      setPlanteles(p);
+      setCarreras(c);
+      setEstatus(e);
+      setAlumnos(a.results);
+      setTrayectorias(t);
+      setTotalCount(a.count);
+    } finally {
+      setLoading(false);
     }
-    return map;
-  }, [trayectorias]);
-
-  const carreraById = useMemo(() => new Map(carreras.map((c) => [c.id, c.nombre])), [carreras]);
-  const carreraPlantelByCarreraId = useMemo(() => new Map(carreras.map((c) => [c.id, c.plantel_id])), [carreras]);
-  const estatusById = useMemo(() => new Map(estatus.map((e) => [e.id, e.nombre])), [estatus]);
-  const plantelNameById = useMemo(() => new Map(planteles.map((p) => [p.id, p.nombre])), [planteles]);
-
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    return alumnos
-      .map((a) => {
-        const t = trayectoriaByAlumno.get(a.id) ?? null;
-        return { alumno: a, trayectoria: t };
-      })
-      .filter(({ alumno, trayectoria }) => {
-        const tPlantelId = trayectoria ? carreraPlantelByCarreraId.get(trayectoria.carrera) : undefined;
-        if (plantelId && (!trayectoria || !tPlantelId || String(tPlantelId) !== plantelId)) return false;
-        if (carreraId && (!trayectoria || String(trayectoria.carrera) !== carreraId)) return false;
-        if (estatusId && (!trayectoria || String(trayectoria.estatus_academico) !== estatusId)) return false;
-        if (!s) return true;
-        const hay = `${alumno.matricula} ${alumno.curp} ${fullName(alumno)}`.toLowerCase();
-        return hay.includes(s);
-      });
-  }, [alumnos, carreraId, carreraPlantelByCarreraId, estatusId, plantelId, q, trayectoriaByAlumno]);
+  }, [token, page, pageSize, plantelId, carreraId, estatusId, q]);
 
   useEffect(() => {
-    setPage(1);
-  }, [q, plantelId, carreraId, estatusId]);
-
-  const safePage = useMemo(() => {
-    const totalPages = Math.max(1, Math.ceil(filtered.length / Math.max(1, pageSize)));
-    return Math.max(1, Math.min(page, totalPages));
-  }, [filtered.length, page, pageSize]);
-
-  const paged = useMemo(() => {
-    const start = (safePage - 1) * pageSize;
-    return filtered.slice(start, start + pageSize);
-  }, [filtered, pageSize, safePage]);
+    void load();
+  }, [load]);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editAlumnoId, setEditAlumnoId] = useState<number | null>(null);
@@ -176,48 +162,24 @@ export default function Alumnos() {
   const editContext = useMemo(() => {
     if (!editAlumnoId) return null;
     const alumno = alumnos.find((a) => a.id === editAlumnoId) ?? null;
-    const trayectoria = trayectoriaByAlumno.get(editAlumnoId) ?? null;
+    const trayectoria = trayectorias.find((t) => t.alumno === editAlumnoId && t.es_actual) ?? null;
     return alumno ? { alumno, trayectoria } : null;
-  }, [alumnos, editAlumnoId, trayectoriaByAlumno]);
+  }, [alumnos, editAlumnoId, trayectorias]);
 
   const derivedPlantelName = useMemo(() => {
     const carrera = formCarreraId ? Number(formCarreraId) : null;
     if (!carrera) return "—";
-    const pid = carreraPlantelByCarreraId.get(carrera);
+    const pid = carreras.find((c) => c.id === carrera)?.plantel_id;
     if (!pid) return "—";
-    return plantelNameById.get(pid) ?? `Plantel #${pid}`;
-  }, [carreraPlantelByCarreraId, formCarreraId, plantelNameById]);
-
-  const load = useCallback(async () => {
-    if (!token) return;
-    setLoading(true);
-    try {
-      const [p, c, e, a, t] = await Promise.all([
-        apiGetPlanteles(token),
-        apiGetCarreras(token),
-        apiGetEstatus(token),
-        apiGetAlumnos(token),
-        apiGetTrayectorias(token),
-      ]);
-      setPlanteles(p);
-      setCarreras(c);
-      setEstatus(e);
-      setAlumnos(a);
-      setTrayectorias(t);
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+    const plantel = planteles.find((p) => p.id === pid);
+    return plantel ? plantel.nombre : `Plantel #${pid}`;
+  }, [carreras, formCarreraId, planteles]);
 
   const openEdit = useCallback(
     (alumnoId: number) => {
       const alumno = alumnos.find((a) => a.id === alumnoId);
       if (!alumno) return;
-      const trayectoria = trayectoriaByAlumno.get(alumnoId) ?? null;
+      const trayectoria = trayectorias.find((t) => t.alumno === alumnoId && t.es_actual) ?? null;
 
       setEditAlumnoId(alumnoId);
       setDrawerTab("info");
@@ -249,7 +211,7 @@ export default function Alumnos() {
           .finally(() => setKardexLoading(false));
       }
     },
-    [alumnos, token, trayectoriaByAlumno],
+    [alumnos, token, trayectorias],
   );
 
   const onSave = useCallback(async () => {
@@ -385,16 +347,21 @@ export default function Alumnos() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.length === 0 ? (
+                  {alumnos.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-8 text-center text-sm text-uh-stone/80">
                         {loading ? "Cargando…" : "Sin resultados. Pulsa “Actualizar” para cargar datos."}
                       </td>
                     </tr>
                   ) : (
-                    paged.map(({ alumno, trayectoria }, idx) => {
-                      const carrera = trayectoria ? carreraById.get(trayectoria.carrera) : "-";
-                      const est = trayectoria ? estatusById.get(trayectoria.estatus_academico) : "-";
+                    alumnos.map((alumno, idx) => {
+                      const trayectoria = trayectorias.find((t) => t.alumno === alumno.id && t.es_actual) ?? null;
+                      const carrera = trayectoria
+                        ? carreras.find((c) => c.id === trayectoria.carrera)?.nombre
+                        : "-";
+                      const est = trayectoria
+                        ? estatus.find((e) => e.id === trayectoria.estatus_academico)?.nombre
+                        : "-";
                       const rowBg = idx % 2 === 0 ? "bg-white" : "bg-uh-paper/50";
                       const badgeVariant: "emerald" | "blue" | "red" | "stone" = est?.toLowerCase().includes("activo")
                         ? "emerald"
@@ -431,9 +398,9 @@ export default function Alumnos() {
               </table>
             </div>
             <Pagination
-              page={safePage}
+              page={page}
               pageSize={pageSize}
-              total={filtered.length}
+              total={totalCount}
               onPageChange={setPage}
               pageSizeOptions={[10, 20, 50, 100]}
               onPageSizeChange={(n) => {
@@ -476,7 +443,7 @@ export default function Alumnos() {
                 {saving ? "Guardando…" : "Guardar"}
               </Button>
             </div>
-          </div>
+          }
         }
       >
         <div className="grid gap-4">
@@ -509,118 +476,118 @@ export default function Alumnos() {
 
           {drawerTab === "info" ? (
             <div className="grid gap-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">MATRÍCULA</div>
-              <div className="mt-2">
-                <Input value={formMatricula} onChange={(e) => setFormMatricula(e.target.value)} />
-              </div>
-            </div>
-            <div>
-              <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CURP</div>
-              <div className="mt-2">
-                <Input value={formCurp} onChange={(e) => setFormCurp(e.target.value)} />
-              </div>
-            </div>
-          </div>
-
-          <div className="grid gap-3">
-            <div>
-              <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NOMBRES</div>
-              <div className="mt-2">
-                <Input value={formNombres} onChange={(e) => setFormNombres(e.target.value)} />
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">PRIMER APELLIDO</div>
-                <div className="mt-2">
-                  <Input value={formPrimerApellido} onChange={(e) => setFormPrimerApellido(e.target.value)} />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">MATRÍCULA</div>
+                  <div className="mt-2">
+                    <Input value={formMatricula} onChange={(e) => setFormMatricula(e.target.value)} />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">CURP</div>
+                  <div className="mt-2">
+                    <Input value={formCurp} onChange={(e) => setFormCurp(e.target.value)} />
+                  </div>
                 </div>
               </div>
-              <div>
-                <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">SEGUNDO APELLIDO</div>
-                <div className="mt-2">
-                  <Input value={formSegundoApellido} onChange={(e) => setFormSegundoApellido(e.target.value)} />
+
+              <div className="grid gap-3">
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NOMBRES</div>
+                  <div className="mt-2">
+                    <Input value={formNombres} onChange={(e) => setFormNombres(e.target.value)} />
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">PRIMER APELLIDO</div>
+                    <div className="mt-2">
+                      <Input value={formPrimerApellido} onChange={(e) => setFormPrimerApellido(e.target.value)} />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">SEGUNDO APELLIDO</div>
+                  <div className="mt-2">
+                    <Input value={formSegundoApellido} onChange={(e) => setFormSegundoApellido(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-uh-stone/15 bg-white p-4">
+                <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">FOTO</div>
+                <div className="mt-3 flex items-center gap-4">
+                  <div>
+                    <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-uh-stone/15 bg-uh-paper/60">
+                      {formFotoPreview ? (
+                        <img src={formFotoPreview} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <span className="text-[10px] font-semibold tracking-[0.18em] text-uh-stone/60">SIN</span>
+                      )}
+                  </div>
+                  <div className="grid gap-2">
+                    <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl border border-uh-stone/15 bg-white px-4 py-2 text-xs font-semibold text-uh-ink transition hover:border-uh-gold/40">
+                      {formFotoName ? "Cambiar foto" : "Cargar foto"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] ?? null;
+                          setFormFoto(file);
+                          setFormFotoName(file ? file.name : null);
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = () => setFormFotoPreview(reader.result as string);
+                            reader.readAsDataURL(file);
+                          } else {
+                            setFormFotoPreview(photoUrl(editContext?.alumno.foto ?? null));
+                          }
+                        }}
+                      />
+                    </div>
+                    {formFotoName ? (
+                      <div className="text-xs text-uh-stone/80">{formFotoName}</div>
+                    ) : (
+                      <div className="text-xs text-uh-stone/60">Formatos: JPG, PNG. Máx. 2 MB.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-uh-stone/15 bg-white p-4">
+                <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">TRAYECTORIA ACTUAL</div>
+                <div className="mt-3 grid gap-3">
+                  <Select value={formCarreraId} onChange={(e) => setFormCarreraId(e.target.value)}>
+                    <option value="">Selecciona carrera</option>
+                    {carreras.map((c) => (
+                      <option key={c.id} value={String(c.id)}>
+                        {c.nombre}
+                      </option>
+                    ))}
+                  </Select>
+                  <Select value={formEstatusId} onChange={(e) => setFormEstatusId(e.target.value)}>
+                    <option value="">Selecciona estatus</option>
+                    {estatus.map((e) => (
+                      <option key={e.id} value={String(e.id)}>
+                        {e.nombre}
+                      </option>
+                    ))}
+                  </Select>
+                  <div>
+                    <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NIVEL ACTUAL</div>
+                    <div className="mt-2">
+                      <Input value={formNivelActual} onChange={(e) => setFormNivelActual(e.target.value)} placeholder="Ej. 6to" />
+                    </div>
+                  </div>
+                  <div className="text-sm text-uh-stone/80">
+                    Plantel inferido por carrera: <span className="font-semibold text-uh-ink">{derivedPlantelName}</span>
+                  </div>
+                  <div className="text-sm text-uh-stone/80">
+                    Periodo académico: <span className="font-semibold text-uh-ink">{kardexData?.periodo_academico?.tipo ?? "—"}</span>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-
-          <div className="rounded-2xl border border-uh-stone/15 bg-white p-4">
-            <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">FOTO</div>
-            <div className="mt-3 flex items-center gap-4">
-              <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-uh-stone/15 bg-uh-paper/60">
-                {formFotoPreview ? (
-                  <img src={formFotoPreview} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <span className="text-[10px] font-semibold tracking-[0.18em] text-uh-stone/60">SIN</span>
-                )}
-              </div>
-              <div className="grid gap-2">
-                <label className="inline-flex cursor-pointer items-center justify-center rounded-2xl border border-uh-stone/15 bg-white px-4 py-2 text-xs font-semibold text-uh-ink transition hover:border-uh-gold/40">
-                  {formFotoName ? "Cambiar foto" : "Cargar foto"}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] ?? null;
-                      setFormFoto(file);
-                      setFormFotoName(file ? file.name : null);
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onload = () => setFormFotoPreview(reader.result as string);
-                        reader.readAsDataURL(file);
-                      } else {
-                        setFormFotoPreview(photoUrl(editContext?.alumno.foto ?? null));
-                      }
-                    }}
-                  />
-                </label>
-                {formFotoName ? (
-                  <div className="text-xs text-uh-stone/80">{formFotoName}</div>
-                ) : (
-                  <div className="text-xs text-uh-stone/60">Formatos: JPG, PNG. Máx. 2 MB.</div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-uh-stone/15 bg-white p-4">
-            <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">TRAYECTORIA ACTUAL</div>
-            <div className="mt-3 grid gap-3">
-              <Select value={formCarreraId} onChange={(e) => setFormCarreraId(e.target.value)}>
-                <option value="">Selecciona carrera</option>
-                {carreras.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.nombre}
-                  </option>
-                ))}
-              </Select>
-              <Select value={formEstatusId} onChange={(e) => setFormEstatusId(e.target.value)}>
-                <option value="">Selecciona estatus</option>
-                {estatus.map((e) => (
-                  <option key={e.id} value={String(e.id)}>
-                    {e.nombre}
-                  </option>
-                ))}
-              </Select>
-              <div>
-                <div className="text-xs font-semibold tracking-[0.18em] text-uh-stone/70">NIVEL ACTUAL</div>
-                <div className="mt-2">
-                  <Input value={formNivelActual} onChange={(e) => setFormNivelActual(e.target.value)} placeholder="Ej. 6to" />
-                </div>
-              </div>
-              <div className="text-sm text-uh-stone/80">
-                Plantel inferido por carrera: <span className="font-semibold text-uh-ink">{derivedPlantelName}</span>
-              </div>
-              <div className="text-sm text-uh-stone/80">
-                Periodo académico: <span className="font-semibold text-uh-ink">{kardexData?.periodo_academico?.tipo ?? "—"}</span>
-              </div>
-            </div>
-          </div>
-          </div>
           ) : null}
 
           {drawerTab === "calificaciones" ? (
@@ -653,14 +620,14 @@ export default function Alumnos() {
                             <thead className="bg-uh-paper/80">
                               <tr className="text-left text-[10px] font-semibold tracking-[0.18em] text-uh-stone/70">
                                 <th className="px-3 py-2">CLAVE</th>
-                                <th className="px-3 py-2">MATERIA</th>
-                                <th className="px-3 py-2">CRÉD.</th>
-                                <th className="px-3 py-2 text-center">ORDINARIO</th>
-                                <th className="px-3 py-2 text-center">EXTRA 1</th>
-                                <th className="px-3 py-2 text-center">EXTRA 2</th>
-                                <th className="px-3 py-2 text-center">FINAL</th>
-                                <th className="px-3 py-2 text-center">LETRA</th>
-                              </tr>
+                    <th className="px-3 py-2">MATERIA</th>
+                    <th className="px-3 py-2">CRÉD.</th>
+                    <th className="px-3 py-2 text-center">ORDINARIO</th>
+                    <th className="px-3 py-2 text-center">EXTRA 1</th>
+                    <th className="px-3 py-2 text-center">EXTRA 2</th>
+                    <th className="px-3 py-2 text-center">FINAL</th>
+                    <th className="px-3 py-2 text-center">LETRA</th>
+                  </tr>
                             </thead>
                             <tbody>
                               {items.map((m) => (
